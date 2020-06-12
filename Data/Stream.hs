@@ -1,5 +1,13 @@
 -- | Streams are infinite lists. Most operations on streams are
 -- completely analogous to the definition in Data.List.
+--
+-- The functions provided in this package are fairly
+-- careful about totality, termination, and productivity.
+-- None of the functions should diverge, provided you adhere to the
+-- preconditions mentioned in the documentation.
+--
+-- Note: I get quite a lot of requests regarding a missing Traversable
+-- instance for Streams. This has been left out by design.
 
 module Data.Stream
    (
@@ -25,6 +33,7 @@ module Data.Stream
    , repeat
    , cycle
    , unfold
+   , prefix
    -- * Extracting sublists
    , take
    , drop
@@ -48,6 +57,10 @@ module Data.Stream
    , zip
    , zipWith
    , unzip
+   , zip3
+   , zipWith3
+   , unzip3
+   , distribute
    -- * Functions on streams of characters
    , words
    , unwords
@@ -61,8 +74,9 @@ module Data.Stream
 
 import Prelude hiding (head, tail, map, scanl, scanl1,
   iterate, take, drop, takeWhile,
-  dropWhile, repeat, cycle, filter, (!!), zip, unzip,
-  zipWith,words,unwords,lines,unlines, break, span, splitAt)
+  dropWhile, repeat, cycle, filter, (!!), 
+  zip, unzip, zipWith, zip3, unzip3, zipWith3,
+  words,unwords,lines,unlines, break, span, splitAt)
 
 import Control.Applicative
 import Control.Monad (liftM2)
@@ -198,6 +212,12 @@ transpose ~(Cons (Cons x xs) yss) =
 iterate :: (a -> a) -> a -> Stream a
 iterate f x = Cons x (iterate f (f x))
 
+-- | The 'prefix' function adds a list as a prefix to an existing
+-- stream. If the list is infinite, it is converted to a Stream and
+-- the second argument is ignored.
+prefix :: [a] -> Stream a -> Stream a
+prefix xs ys = foldr Cons ys xs
+
 -- | 'repeat' @x@ returns a constant stream, where all elements are
 -- equal to @x@.
 repeat :: a -> Stream a
@@ -206,9 +226,15 @@ repeat x = Cons x (repeat x)
 -- | 'cycle' @xs@ returns the infinite repetition of @xs@:
 --
 -- > cycle [1,2,3] = Cons 1 (Cons 2 (Cons 3 (Cons 1 (Cons 2 ...
+--
+-- /Beware:/ passing an empty list to cycle will throw an error.
 cycle :: [a] -> Stream a
-cycle xs = foldr Cons (cycle xs) xs
-
+cycle xs
+  | null xs     = error "Stream.cycle: empty list"
+  | otherwise   = go xs
+    where
+      go xs = foldr Cons (go xs) xs
+  
 -- | The unfold function is similar to the unfold for lists. Note
 -- there is no base case: all streams must be infinite.
 unfold :: (c -> (a,c)) -> c -> Stream a
@@ -269,6 +295,9 @@ dropWhile p ~(Cons x xs)
 
 -- | 'span' @p@ @xs@ returns the longest prefix of @xs@ that satisfies
 -- @p@, together with the remainder of the stream.
+--
+-- /Beware/: this function may diverge if every element of @xs@
+-- satisfies @p@, e.g.  @span even (repeat 0)@ will loop.
 span :: (a -> Bool) -> Stream a -> ([a], Stream a)
 span p (Cons x xs)
   | p x       = let (trues, falses) = span p xs
@@ -276,6 +305,8 @@ span p (Cons x xs)
   | otherwise = ([], Cons x xs)
 
 -- | The 'break' @p@ function is equivalent to 'span' @not . p@.
+--
+-- /Beware/: this function may diverge for the same reason as @span@.
 break :: (a -> Bool) -> Stream a -> ([a], Stream a)
 break p = span (not . p)
 
@@ -373,10 +404,16 @@ findIndices p = indicesFrom 0
       let ixs = (indicesFrom $! (ix+1)) xs
       in if p x then Cons ix ixs else ixs
 
--- | The 'zip' function takes two streams and returns a list of
--- corresponding pairs.
+-- | The 'zip' function takes two streams and returns the stream of
+-- pairs obtained by pairing elements at the same position in both
+-- argument streams.
 zip :: Stream a -> Stream b -> Stream (a,b)
 zip ~(Cons x xs) ~(Cons y ys) = Cons (x,y) (zip xs ys)
+
+-- | The 'zip3' function behaves as the 'zip' function, but works on
+-- three streams.
+zip3 :: Stream a -> Stream b -> Stream c -> Stream (a,b,c)
+zip3 ~(Cons x xs) ~(Cons y ys) ~(Cons z zs) = Cons (x,y,z) (zip3 xs ys zs)
 
 -- | The 'zipWith' function generalizes 'zip'. Rather than tupling
 -- the functions, the elements are combined using the function
@@ -384,10 +421,37 @@ zip ~(Cons x xs) ~(Cons y ys) = Cons (x,y) (zip xs ys)
 zipWith :: (a -> b -> c) -> Stream a -> Stream b -> Stream c
 zipWith f ~(Cons x xs) ~(Cons y ys) = Cons (f x y) (zipWith f xs ys)
 
+-- | The 'zipWith3' behaves as 'zipWith' but takes three stream
+-- arguments.
+zipWith3 :: (a -> b -> c -> d) -> Stream a -> Stream b -> Stream c -> Stream d
+zipWith3 f ~(Cons x xs) ~(Cons y ys) (Cons z zs) = Cons (f x y z) (zipWith3 f xs ys zs)
+
+-- | The 'distribute' function is similar to the 'sequenceA' function
+-- defined in Data.Traversable. Since 'Streams' are not 'Foldable' in
+-- general, there is no 'Traversable' instance for streams. They do
+-- support a similar notion that only requires the outer type
+-- constructor to be functorial.
+distribute :: (Functor f) => f (Stream a) -> Stream (f a)
+distribute t = Cons (fmap head t) (distribute (fmap tail t))
+
 -- | The 'unzip' function is the inverse of the 'zip' function.
 unzip :: Stream (a,b) -> (Stream a, Stream b)
 unzip ~(Cons (x,y) xys) = (Cons x (fst (unzip xys)),
                                 Cons y (snd (unzip xys)))
+
+-- | The 'unzip3' function is the inverse of the 'zip' function.
+unzip3 :: Stream (a,b,c) -> (Stream a, Stream b, Stream c)
+unzip3 ~(Cons (x,y,z) xyzs) =  ( Cons x (fst3 (unzip3 xyzs))
+                               , Cons y (snd3 (unzip3 xyzs))
+                               , Cons z (thd3 (unzip3 xyzs)))
+  where
+  fst3 :: (a,b,c) -> a
+  fst3 (x,_,_) = x                              
+  snd3 :: (a,b,c) -> b
+  snd3 (_,y,_) = y
+  thd3 :: (a,b,c) -> c                              
+  thd3 (_,_,z) = z
+
 
 -- | The 'words' function breaks a stream of characters into a
 -- stream of words, which were delimited by white space.
@@ -429,4 +493,3 @@ toList (Cons x xs) = x : toList xs
 fromList :: [a] -> Stream a
 fromList (x:xs) = Cons x (fromList xs)
 fromList []     = error "Stream.fromList applied to finite list"
-
