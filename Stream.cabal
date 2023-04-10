@@ -22,3 +22,6 @@ Build-Depends:          base < 5, QuickCheck >= 2.0, lazysmallcheck >= 0.3
 Build-Type:		Simple
 Exposed-modules:        Data.Stream
 
+source-repository head
+  type: git
+  location: https://github.com/wouter-swierstra/Data.Stream.git
