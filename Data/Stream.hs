@@ -201,9 +201,10 @@ scan1' :: (a -> a -> a) -> Stream a -> Stream a
 scan1' f ~(Cons x xs) = scan' f x xs
 
 -- | 'transpose' computes the transposition of a stream of streams.
+--
+-- This is just a special case of `distribute`.
 transpose :: Stream (Stream a) -> Stream (Stream a)
-transpose ~(Cons (Cons x xs) yss) =
-    (x <:> map head yss) <:> transpose (xs <:> map tail yss)
+transpose = distribute
 
 -- | 'iterate' @f@ @x@ function produces the infinite sequence
 -- of repeated applications of @f@ to @x@.
